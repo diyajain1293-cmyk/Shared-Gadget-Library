@@ -162,11 +162,10 @@ def train_and_evaluate_models(df: pd.DataFrame):
                 "test_roc_auc": roc_auc_score(y_test, y_test_proba),
             }
         )
-
-        # Confusion matrix figure (black & white)
+        # Confusion matrix figure (black & white, readable text)
         cm = confusion_matrix(y_test, y_test_pred)
         fig_cm, ax_cm = plt.subplots()
-        ax_cm.imshow(cm, cmap="Greys")
+        im = ax_cm.imshow(cm, cmap="Greys")
         ax_cm.set_title(f"Confusion Matrix - {name}")
         ax_cm.set_xlabel("Predicted label")
         ax_cm.set_ylabel("True label")
@@ -175,12 +174,27 @@ def train_and_evaluate_models(df: pd.DataFrame):
         ax_cm.set_xticklabels(["Not willing", "Willing"])
         ax_cm.set_yticklabels(["Not willing", "Willing"])
 
+        # Decide text colour based on cell intensity
+        max_val = cm.max()
+        threshold = max_val / 2.0
+
         for i in range(cm.shape[0]):
             for j in range(cm.shape[1]):
-                ax_cm.text(j, i, cm[i, j], ha="center", va="center", color="black")
+                value = cm[i, j]
+                text_color = "white" if value > threshold else "black"
+                ax_cm.text(
+                    j,
+                    i,
+                    value,
+                    ha="center",
+                    va="center",
+                    color=text_color,
+                    fontsize=10,
+                )
 
         plt.tight_layout()
         confusion_figs[name] = fig_cm
+
 
         # ROC data
         fpr, tpr, _ = roc_curve(y_test, y_test_proba)
@@ -252,6 +266,10 @@ def apply_filters(df: pd.DataFrame):
 # =========================
 
 def show_insight_charts(df_filtered: pd.DataFrame, equipment_cols):
+    # Make sure target and score exist
+    if "target_willing" not in df_filtered.columns or "Likelihood_Score" not in df_filtered.columns:
+        df_filtered = add_target_and_scores(df_filtered)
+
     st.subheader("1. Age group vs willingness to use BorrowBox")
     age_pref = (
         df_filtered.groupby("Q1_Age_Group")["target_willing"]
@@ -269,6 +287,10 @@ def show_insight_charts(df_filtered: pd.DataFrame, equipment_cols):
         )
     )
     st.altair_chart(chart_age, use_container_width=True)
+    st.caption(
+        "Younger age groups, especially 18–34, have a higher share of people willing to use BorrowBox. "
+        "This suggests our primary target segment is young adults."
+    )
 
     st.subheader("2. Subscription willingness by age group (monthly fee)")
     wtp_age = (
@@ -287,6 +309,10 @@ def show_insight_charts(df_filtered: pd.DataFrame, equipment_cols):
         )
     )
     st.altair_chart(chart_wtp_age, use_container_width=True)
+    st.caption(
+        "Different age segments show different willingness to pay. Younger users cluster in lower tiers, "
+        "while working professionals are more open to mid-level subscription prices."
+    )
 
     st.subheader("3. Most popular equipment categories")
     eq_interest = (
@@ -296,7 +322,11 @@ def show_insight_charts(df_filtered: pd.DataFrame, equipment_cols):
         .reset_index()
         .rename(columns={"index": "equipment", 0: "interest_rate"})
     )
-    eq_interest["equipment"] = eq_interest["equipment"].str.replace("Q15_", "", regex=False).str.replace("Q19_", "", regex=False)
+    eq_interest["equipment"] = (
+        eq_interest["equipment"]
+        .str.replace("Q15_", "", regex=False)
+        .str.replace("Q19_", "", regex=False)
+    )
 
     chart_eq = (
         alt.Chart(eq_interest.head(15))
@@ -308,6 +338,10 @@ def show_insight_charts(df_filtered: pd.DataFrame, equipment_cols):
         )
     )
     st.altair_chart(chart_eq, use_container_width=True)
+    st.caption(
+        "Cleaning appliances, tools, sports gear and outdoor equipment appear at the top. "
+        "These should be prioritised when we build the initial BorrowBox inventory."
+    )
 
     st.subheader("4. Income vs likelihood to use (heatmap)")
     heat = (
@@ -326,6 +360,10 @@ def show_insight_charts(df_filtered: pd.DataFrame, equipment_cols):
         )
     )
     st.altair_chart(chart_heat, use_container_width=True)
+    st.caption(
+        "BorrowBox is attractive across several income groups, but low- to mid-income respondents show particularly strong interest, "
+        "as they benefit most from avoiding large one-off purchases."
+    )
 
     st.subheader("5. Need frequency vs likelihood (boxplot)")
     box_data = df_filtered[["Q11_Need_Frequency", "Likelihood_Score"]].dropna()
@@ -339,6 +377,98 @@ def show_insight_charts(df_filtered: pd.DataFrame, equipment_cols):
         )
     )
     st.altair_chart(chart_box, use_container_width=True)
+    st.caption(
+        "People who need such gadgets occasionally (for example once a month or a few times a year) "
+        "are more willing to use BorrowBox than people who almost never need them."
+    )
+
+    # -----------------------------
+    # New Chart 6 – Accommodation type vs willingness
+    # -----------------------------
+    st.subheader("6. Accommodation type vs willingness to use BorrowBox")
+    acc_pref = (
+        df_filtered.groupby("Q8_Accommodation_Type")["target_willing"]
+        .mean()
+        .reset_index(name="share_willing")
+        .sort_values("share_willing", ascending=False)
+    )
+    chart_acc = (
+        alt.Chart(acc_pref)
+        .mark_bar()
+        .encode(
+            x=alt.X("share_willing:Q", title="Share willing to use"),
+            y=alt.Y("Q8_Accommodation_Type:N", sort="-x", title="Accommodation type"),
+            tooltip=["Q8_Accommodation_Type", alt.Tooltip("share_willing", format=".2f")],
+        )
+    )
+    st.altair_chart(chart_acc, use_container_width=True)
+    st.caption(
+        "Residents in apartments or smaller units tend to be more willing to use BorrowBox than those in larger homes or villas, "
+        "because they have less storage space and more motivation to share."
+    )
+
+    # -----------------------------
+    # New Chart 7 – Storage space vs willingness
+    # -----------------------------
+    st.subheader("7. Storage space at home vs willingness to use BorrowBox")
+    storage_pref = (
+        df_filtered.groupby("Q10_Storage_Space")["target_willing"]
+        .mean()
+        .reset_index(name="share_willing")
+        .sort_values("share_willing", ascending=False)
+    )
+    chart_storage = (
+        alt.Chart(storage_pref)
+        .mark_bar()
+        .encode(
+            x=alt.X("share_willing:Q", title="Share willing to use"),
+            y=alt.Y("Q10_Storage_Space:N", sort="-x", title="Storage space at home"),
+            tooltip=["Q10_Storage_Space", alt.Tooltip("share_willing", format=".2f")],
+        )
+    )
+    st.altair_chart(chart_storage, use_container_width=True)
+    st.caption(
+        "Households with limited or medium storage space are more interested in BorrowBox, confirming that space-saving "
+        "is a key value proposition for the service."
+    )
+
+    # -----------------------------
+    # New Chart 8 – Service feature importance for high-likelihood users
+    # -----------------------------
+    st.subheader("8. What matters most to high-likelihood users (service features)")
+    service_cols = [c for c in df_filtered.columns if c.startswith("Q27_")]
+    high_like = df_filtered[df_filtered["Likelihood_Score"] >= 4]
+
+    if not high_like.empty and service_cols:
+        service_mean = (
+            high_like[service_cols]
+            .mean()
+            .sort_values(ascending=False)
+            .reset_index()
+            .rename(columns={"index": "feature", 0: "importance"})
+        )
+        service_mean["feature"] = (
+            service_mean["feature"]
+            .str.replace("Q27_", "", regex=False)
+            .str.replace("_", " ")
+        )
+
+        chart_service = (
+            alt.Chart(service_mean.head(10))
+            .mark_bar()
+            .encode(
+                x=alt.X("importance:Q", title="Share of high-likelihood users selecting this"),
+                y=alt.Y("feature:N", sort="-x", title="Service feature"),
+                tooltip=["feature", alt.Tooltip("importance", format=".2f")],
+            )
+        )
+        st.altair_chart(chart_service, use_container_width=True)
+        st.caption(
+            "Among users who are highly likely to use BorrowBox, features like cleanliness, item quality, availability and "
+            "ease of booking are selected most often. These operational factors are critical to customer satisfaction."
+        )
+    else:
+        st.info("Not enough high-likelihood users in the current filter to show service feature importance.")
 
 
 # =========================
